@@ -1,0 +1,12 @@
+type: idcollector
+
+status:
+  class: processor
+  stability:
+    beta: [logs]
+  distributions: [core, contrib, k8s]
+  warnings: [Identity Conflict]
+  codeowners:
+    active: [labaneilers]
+tests:
+  config: {}
