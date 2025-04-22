@@ -6,7 +6,6 @@ package idcollectorprocessor // import "github.com/open-telemetry/opentelemetry-
 import (
 	"context"
 	"regexp"
-	"sort"
 	"strings"
 
 	"go.opentelemetry.io/collector/pdata/pcommon"
@@ -57,31 +56,40 @@ func (a *logidcollectorprocessor) processLogs(ctx context.Context, ld plog.Logs)
 
 				var collectedIDs []string
 
-				// recurse through all attributes
-				var processAttributes func(attrs pcommon.Map)
-				processAttributes = func(attrs pcommon.Map) {
-					attrs.Range(func(key string, value pcommon.Value) bool {
-						if value.Type() == pcommon.ValueTypeMap {
-							// If the value is a nested map, recurse into it
-							processAttributes(value.Map())
-						} else if value.Type() == pcommon.ValueTypeStr {
-							// If the value is a string, extract alphanumeric IDs
-							strValue := value.Str()
-							for _, pattern := range a.compiledPatterns {
-								ids := pattern.FindAllString(strValue, -1)
-								if len(ids) > 0 {
-									collectedIDs = append(collectedIDs, ids...)
-								}
+				// Recurse through all attributes
+				var processAttributes func(attrs pcommon.Value)
+				processAttributes = func(attrs pcommon.Value) {
+					switch attrs.Type() {
+					case pcommon.ValueTypeMap:
+						attrs.Map().Range(func(k string, mv pcommon.Value) bool {
+							processAttributes(mv)
+							return true
+						})
+					case pcommon.ValueTypeSlice:
+						for i := 0; i < attrs.Slice().Len(); i++ {
+							processAttributes(attrs.Slice().At(i))
+						}
+					case pcommon.ValueTypeStr:
+						strValue := attrs.Str()
+						for _, pattern := range a.compiledPatterns {
+							ids := pattern.FindAllString(strValue, -1)
+							if len(ids) > 0 {
+								collectedIDs = append(collectedIDs, ids...)
 							}
 						}
-						return true // Continue iteration
-					})
+					}
 				}
 
-				processAttributes(topAttrs)
+				// Process the raw Body
+				processAttributes(lr.Body())
+
+				// Process all attributes (recursively)
+				topAttrs.Range(func(k string, v pcommon.Value) bool {
+					processAttributes(v)
+					return true // continue iterating
+				})
 
 				if len(collectedIDs) > 0 {
-					sort.Strings(collectedIDs) // Sort IDs alphanumerically
 					topAttrs.PutStr(a.cfg.TargetAttribute, strings.Join(collectedIDs, ","))
 				}
 			}
