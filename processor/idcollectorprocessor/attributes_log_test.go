@@ -5,6 +5,8 @@ package idcollectorprocessor
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -22,25 +24,39 @@ import (
 // Common structure for all the Tests
 type logTestCase struct {
 	name               string
+	inputBody          string
 	inputAttributes    map[string]any
 	expectedAttributes map[string]any
 }
 
 // runIndividualLogTestCase is the common logic of passing trace data through a configured attributes processor.
 func runIndividualLogTestCase(t *testing.T, tt logTestCase, tp processor.Logs) {
+
 	t.Run(tt.name, func(t *testing.T) {
-		ld := generateLogData(tt.name, tt.inputAttributes)
+		ld := generateLogData(tt.name, tt.inputBody, tt.inputAttributes)
 		assert.NoError(t, tp.ConsumeLogs(context.Background(), ld))
-		assert.NoError(t, plogtest.CompareLogs(generateLogData(tt.name, tt.expectedAttributes), ld))
+
+		// if the result log has an attribute "ss.ids", parse it as a csv, sort the strings, rejoin them, and write them back to "ss.ids".
+		// This ensures the order of IDs is consistent across runs.
+		extractedIDsField, found := ld.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0).Attributes().Get("ss.ids")
+		if found {
+
+			idList := strings.Split(extractedIDsField.AsString(), ",")
+			sort.Strings(idList)
+			extractedIDsField.SetStr(strings.Join(idList, ","))
+		}
+
+		assert.NoError(t, plogtest.CompareLogs(generateLogData(tt.name, tt.inputBody, tt.expectedAttributes), ld))
 	})
 }
 
-func generateLogData(resourceName string, attrs map[string]any) plog.Logs {
+func generateLogData(resourceName string, body string, attrs map[string]any) plog.Logs {
 	td := plog.NewLogs()
 	res := td.ResourceLogs().AppendEmpty()
 	res.Resource().Attributes().PutStr("name", resourceName)
 	sl := res.ScopeLogs().AppendEmpty()
 	lr := sl.LogRecords().AppendEmpty()
+	lr.Body().SetStr(body)
 	//nolint:errcheck
 	lr.Attributes().FromRaw(attrs)
 	return td
@@ -89,7 +105,8 @@ func TestLogProcessor_NilEmptyData(t *testing.T) {
 func TestAttributes_FindsOneOrMultipleUUID(t *testing.T) {
 	testCases := []logTestCase{
 		{
-			name: "single and multiple matches",
+			name:      "single and multiple matches",
+			inputBody: "some log 33333333333333333333333333333333 here",
 			inputAttributes: map[string]any{
 				"attr1": "00000000000000000000000000000000",
 				"attr2": "not an ID",
@@ -99,31 +116,12 @@ func TestAttributes_FindsOneOrMultipleUUID(t *testing.T) {
 				"attr1":  "00000000000000000000000000000000",
 				"attr2":  "not an ID",
 				"attr3":  "11111111111111111111111111111111 22222222222222222222222222222222",
-				"ss.ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222",
+				"ss.ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222,33333333333333333333333333333333",
 			},
 		},
-	}
-
-	factory := NewFactory()
-	cfg := factory.CreateDefaultConfig()
-	cfg.(*Config).TargetAttribute = "ss.ids"
-	cfg.(*Config).Patterns = PatternsArray{
-		"\\b[a-zA-Z0-9]{32}\\b",
-	}
-
-	tp, err := factory.CreateLogs(context.Background(), processortest.NewNopSettings(metadata.Type), cfg, consumertest.NewNop())
-	require.NoError(t, err)
-	require.NotNil(t, tp)
-
-	for _, tt := range testCases {
-		runIndividualLogTestCase(t, tt, tp)
-	}
-}
-
-func TestAttributes_FindsNestedUUID(t *testing.T) {
-	testCases := []logTestCase{
 		{
-			name: "finds nested matches",
+			name:      "finds nested matches",
+			inputBody: "some log",
 			inputAttributes: map[string]any{
 				"attr1": "00000000000000000000000000000000",
 				"attr2": map[string]any{
@@ -134,6 +132,29 @@ func TestAttributes_FindsNestedUUID(t *testing.T) {
 				"attr1": "00000000000000000000000000000000",
 				"attr2": map[string]any{
 					"attr1": "11111111111111111111111111111111 22222222222222222222222222222222",
+				},
+				"ss.ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222",
+			},
+		},
+		{
+			name:      "finds array matches",
+			inputBody: "some log",
+			inputAttributes: map[string]any{
+				"attr1": "00000000000000000000000000000000",
+				"attr2": []any{
+					map[string]any{
+						"attr1": "11111111111111111111111111111111",
+						"attr2": "something something 22222222222222222222222222222222 something",
+					},
+				},
+			},
+			expectedAttributes: map[string]any{
+				"attr1": "00000000000000000000000000000000",
+				"attr2": []any{
+					map[string]any{
+						"attr1": "11111111111111111111111111111111",
+						"attr2": "something something 22222222222222222222222222222222 something",
+					},
 				},
 				"ss.ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222",
 			},
@@ -159,7 +180,8 @@ func TestAttributes_FindsNestedUUID(t *testing.T) {
 func TestAttributes_FindsMultipleDifferentLengthIDs(t *testing.T) {
 	testCases := []logTestCase{
 		{
-			name: "finds nested matches",
+			name:      "finds nested matches",
+			inputBody: "some log",
 			inputAttributes: map[string]any{
 				"attr1": "00000000",
 				"attr2": map[string]any{
@@ -196,7 +218,8 @@ func TestAttributes_FindsMultipleDifferentLengthIDs(t *testing.T) {
 func TestAttributes_DoesntMatchLongerIDs(t *testing.T) {
 	testCases := []logTestCase{
 		{
-			name: "finds nested matches",
+			name:      "finds nested matches",
+			inputBody: "some log",
 			inputAttributes: map[string]any{
 				"attr1": "000000000000000000000000000000000", // 33 characters
 			},
@@ -221,317 +244,3 @@ func TestAttributes_DoesntMatchLongerIDs(t *testing.T) {
 		runIndividualLogTestCase(t, tt, tp)
 	}
 }
-
-// func TestAttributes_FilterLogsByNameStrict(t *testing.T) {
-// 	testCases := []logTestCase{
-// 		{
-// 			name:            "apply",
-// 			inputAttributes: map[string]any{},
-// 			expectedAttributes: map[string]any{
-// 				"attribute1": 123,
-// 			},
-// 		},
-// 		{
-// 			name: "apply",
-// 			inputAttributes: map[string]any{
-// 				"NoModification": false,
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"attribute1":     123,
-// 				"NoModification": false,
-// 			},
-// 		},
-// 		{
-// 			name:               "incorrect_log_name",
-// 			inputAttributes:    map[string]any{},
-// 			expectedAttributes: map[string]any{},
-// 		},
-// 		{
-// 			name:               "dont_apply",
-// 			inputAttributes:    map[string]any{},
-// 			expectedAttributes: map[string]any{},
-// 		},
-// 		{
-// 			name: "incorrect_log_name_with_attr",
-// 			inputAttributes: map[string]any{
-// 				"NoModification": true,
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"NoModification": true,
-// 			},
-// 		},
-// 	}
-
-// 	factory := NewFactory()
-// 	cfg := factory.CreateDefaultConfig()
-// 	oCfg := cfg.(*Config)
-// 	oCfg.Actions = []attraction.ActionKeyValue{
-// 		{Key: "attribute1", Action: attraction.INSERT, Value: 123},
-// 	}
-// 	oCfg.Include = &filterconfig.MatchProperties{
-// 		Resources: []filterconfig.Attribute{{Key: "name", Value: "apply"}},
-// 		Config:    *createConfig(filterset.Strict),
-// 	}
-// 	oCfg.Exclude = &filterconfig.MatchProperties{
-// 		Resources: []filterconfig.Attribute{{Key: "name", Value: "dont_apply"}},
-// 		Config:    *createConfig(filterset.Strict),
-// 	}
-// 	tp, err := factory.CreateLogs(context.Background(), processortest.NewNopSettings(metadata.Type), cfg, consumertest.NewNop())
-// 	require.NoError(t, err)
-// 	require.NotNil(t, tp)
-
-// 	for _, tt := range testCases {
-// 		runIndividualLogTestCase(t, tt, tp)
-// 	}
-// }
-
-// func TestAttributes_FilterLogsByNameRegexp(t *testing.T) {
-// 	testCases := []logTestCase{
-// 		{
-// 			name:            "apply_to_log_with_no_attrs",
-// 			inputAttributes: map[string]any{},
-// 			expectedAttributes: map[string]any{
-// 				"attribute1": 123,
-// 			},
-// 		},
-// 		{
-// 			name: "apply_to_log_with_attr",
-// 			inputAttributes: map[string]any{
-// 				"NoModification": false,
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"attribute1":     123,
-// 				"NoModification": false,
-// 			},
-// 		},
-// 		{
-// 			name:               "incorrect_log_name",
-// 			inputAttributes:    map[string]any{},
-// 			expectedAttributes: map[string]any{},
-// 		},
-// 		{
-// 			name:               "apply_dont_apply",
-// 			inputAttributes:    map[string]any{},
-// 			expectedAttributes: map[string]any{},
-// 		},
-// 		{
-// 			name: "incorrect_log_name_with_attr",
-// 			inputAttributes: map[string]any{
-// 				"NoModification": true,
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"NoModification": true,
-// 			},
-// 		},
-// 	}
-
-// 	factory := NewFactory()
-// 	cfg := factory.CreateDefaultConfig()
-// 	oCfg := cfg.(*Config)
-// 	oCfg.Actions = []attraction.ActionKeyValue{
-// 		{Key: "attribute1", Action: attraction.INSERT, Value: 123},
-// 	}
-// 	oCfg.Include = &filterconfig.MatchProperties{
-// 		Resources: []filterconfig.Attribute{{Key: "name", Value: "^apply.*"}},
-// 		Config:    *createConfig(filterset.Regexp),
-// 	}
-// 	oCfg.Exclude = &filterconfig.MatchProperties{
-// 		Resources: []filterconfig.Attribute{{Key: "name", Value: ".*dont_apply$"}},
-// 		Config:    *createConfig(filterset.Regexp),
-// 	}
-// 	tp, err := factory.CreateLogs(context.Background(), processortest.NewNopSettings(metadata.Type), cfg, consumertest.NewNop())
-// 	require.NoError(t, err)
-// 	require.NotNil(t, tp)
-
-// 	for _, tt := range testCases {
-// 		runIndividualLogTestCase(t, tt, tp)
-// 	}
-// }
-
-// func TestLogAttributes_Hash(t *testing.T) {
-// 	testCases := []logTestCase{
-// 		{
-// 			name: "String",
-// 			inputAttributes: map[string]any{
-// 				"user.email": "john.doe@example.com",
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"user.email": "836f82db99121b3481011f16b49dfa5fbc714a0d1b1b9f784a1ebbbf5b39577f",
-// 			},
-// 		},
-// 		{
-// 			name: "Int",
-// 			inputAttributes: map[string]any{
-// 				"user.id": 10,
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"user.id": "a111f275cc2e7588000001d300a31e76336d15b9d314cd1a1d8f3d3556975eed",
-// 			},
-// 		},
-// 		{
-// 			name: "Double",
-// 			inputAttributes: map[string]any{
-// 				"user.balance": 99.1,
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"user.balance": "05fabd78b01be9692863cb0985f600c99da82979af18db5c55173c2a30adb924",
-// 			},
-// 		},
-// 		{
-// 			name: "Bool",
-// 			inputAttributes: map[string]any{
-// 				"user.authenticated": true,
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"user.authenticated": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a",
-// 			},
-// 		},
-// 	}
-
-// 	factory := NewFactory()
-// 	cfg := factory.CreateDefaultConfig()
-// 	oCfg := cfg.(*Config)
-// 	oCfg.Actions = []attraction.ActionKeyValue{
-// 		{Key: "user.email", Action: attraction.HASH},
-// 		{Key: "user.id", Action: attraction.HASH},
-// 		{Key: "user.balance", Action: attraction.HASH},
-// 		{Key: "user.authenticated", Action: attraction.HASH},
-// 	}
-
-// 	tp, err := factory.CreateLogs(context.Background(), processortest.NewNopSettings(metadata.Type), cfg, consumertest.NewNop())
-// 	require.NoError(t, err)
-// 	require.NotNil(t, tp)
-
-// 	for _, tt := range testCases {
-// 		runIndividualLogTestCase(t, tt, tp)
-// 	}
-// }
-
-// func TestLogAttributes_Convert(t *testing.T) {
-// 	testCases := []logTestCase{
-// 		{
-// 			name: "int to int",
-// 			inputAttributes: map[string]any{
-// 				"to.int": 1,
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"to.int": 1,
-// 			},
-// 		},
-// 		{
-// 			name: "false to int",
-// 			inputAttributes: map[string]any{
-// 				"to.int": false,
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"to.int": 0,
-// 			},
-// 		},
-// 		{
-// 			name: "String to int (good)",
-// 			inputAttributes: map[string]any{
-// 				"to.int": "123",
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"to.int": 123,
-// 			},
-// 		},
-// 		{
-// 			name: "String to int (bad)",
-// 			inputAttributes: map[string]any{
-// 				"to.int": "int-10",
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"to.int": "int-10",
-// 			},
-// 		},
-// 		{
-// 			name: "String to double",
-// 			inputAttributes: map[string]any{
-// 				"to.double": "123.6",
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"to.double": 123.6,
-// 			},
-// 		},
-// 		{
-// 			name: "Double to string",
-// 			inputAttributes: map[string]any{
-// 				"to.string": 99.1,
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"to.string": "99.1",
-// 			},
-// 		},
-// 	}
-
-// 	factory := NewFactory()
-// 	cfg := factory.CreateDefaultConfig()
-// 	oCfg := cfg.(*Config)
-// 	oCfg.Actions = []attraction.ActionKeyValue{
-// 		{Key: "to.int", Action: attraction.CONVERT, ConvertedType: "int"},
-// 		{Key: "to.double", Action: attraction.CONVERT, ConvertedType: "double"},
-// 		{Key: "to.string", Action: attraction.CONVERT, ConvertedType: "string"},
-// 	}
-
-// 	tp, err := factory.CreateLogs(context.Background(), processortest.NewNopSettings(metadata.Type), cfg, consumertest.NewNop())
-// 	require.NoError(t, err)
-// 	require.NotNil(t, tp)
-
-// 	for _, tt := range testCases {
-// 		runIndividualLogTestCase(t, tt, tp)
-// 	}
-// }
-
-// func BenchmarkAttributes_FilterLogsByName(b *testing.B) {
-// 	testCases := []logTestCase{
-// 		{
-// 			name:            "apply_to_log_with_no_attrs",
-// 			inputAttributes: map[string]any{},
-// 			expectedAttributes: map[string]any{
-// 				"attribute1": 123,
-// 			},
-// 		},
-// 		{
-// 			name: "apply_to_log_with_attr",
-// 			inputAttributes: map[string]any{
-// 				"NoModification": false,
-// 			},
-// 			expectedAttributes: map[string]any{
-// 				"attribute1":     123,
-// 				"NoModification": false,
-// 			},
-// 		},
-// 		{
-// 			name:               "dont_apply",
-// 			inputAttributes:    map[string]any{},
-// 			expectedAttributes: map[string]any{},
-// 		},
-// 	}
-
-// 	factory := NewFactory()
-// 	cfg := factory.CreateDefaultConfig()
-// 	oCfg := cfg.(*Config)
-// 	oCfg.Actions = []attraction.ActionKeyValue{
-// 		{Key: "attribute1", Action: attraction.INSERT, Value: 123},
-// 	}
-// 	oCfg.Include = &filterconfig.MatchProperties{
-// 		Config:    *createConfig(filterset.Regexp),
-// 		Resources: []filterconfig.Attribute{{Key: "name", Value: "^apply.*"}},
-// 	}
-// 	tp, err := factory.CreateLogs(context.Background(), processortest.NewNopSettings(metadata.Type), cfg, consumertest.NewNop())
-// 	require.NoError(b, err)
-// 	require.NotNil(b, tp)
-
-// 	for _, tt := range testCases {
-// 		td := generateLogData(tt.name, tt.inputAttributes)
-
-// 		b.Run(tt.name, func(b *testing.B) {
-// 			for i := 0; i < b.N; i++ {
-// 				assert.NoError(b, tp.ConsumeLogs(context.Background(), td))
-// 			}
-// 		})
-
-// 		require.NoError(b, plogtest.CompareLogs(generateLogData(tt.name, tt.expectedAttributes), td))
-// 	}
-// }
