@@ -215,7 +215,7 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig()
 	cfg.(*Config).TargetAttribute = "ss.ids"
-	cfg.(*Config).Patterns = PatternsArray{
+	cfg.(*Config).Patterns = []string{
 		"\\b[a-zA-Z0-9]{32}\\b",
 	}
 
@@ -253,7 +253,7 @@ func TestIDCollector_FindsMultipleDifferentLengthIDs(t *testing.T) {
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig()
 	cfg.(*Config).TargetAttribute = "ss.ids"
-	cfg.(*Config).Patterns = PatternsArray{
+	cfg.(*Config).Patterns = []string{
 		"\\b[a-zA-Z0-9]{32}\\b",
 		"\\b[a-zA-Z0-9]{8}\\b",
 	}
@@ -285,7 +285,7 @@ func TestIDCollector_DoesntMatchLongerIDs(t *testing.T) {
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig()
 	cfg.(*Config).TargetAttribute = "ss.ids"
-	cfg.(*Config).Patterns = PatternsArray{
+	cfg.(*Config).Patterns = []string{
 		"\\b[a-zA-Z0-9]{32}\\b",
 	}
 
@@ -323,12 +323,55 @@ func TestIDCollector_ExcludesNegativePatterns(t *testing.T) {
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig()
 	cfg.(*Config).TargetAttribute = "ss.ids"
-	cfg.(*Config).Patterns = PatternsArray{
+	cfg.(*Config).Patterns = []string{
 		"\\b[a-zA-Z0-9]{32}\\b",
 		"\\b[a-zA-Z0-9]{8}\\b",
 	}
-	cfg.(*Config).NegativePatterns = PatternsArray{
+	cfg.(*Config).NegativePatterns = []string{
 		"\\b[1]{32}\\b",
+	}
+
+	tp, err := factory.CreateLogs(context.Background(), processortest.NewNopSettings(metadata.Type), cfg, consumertest.NewNop())
+	require.NoError(t, err)
+	require.NotNil(t, tp)
+
+	for _, tt := range testCases {
+		runIndividualLogTestCase(t, tt, tp)
+	}
+}
+
+func TestIDCollector_ExcludesAttrs(t *testing.T) {
+	testCases := []logTestCase{
+		{
+			name:         "excludes excluded attributes",
+			inputBody:    "some log",
+			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
+			inputAttributes: map[string]any{
+				"attr1": "00000000000000000000000000000000",
+				"attr2": map[string]any{
+					"attr1": "11111111111111111111111111111111",
+				},
+				"exclude_me": "22222222222222222222222222222222",
+			},
+			expectedAttributes: map[string]any{
+				"attr1": "00000000000000000000000000000000",
+				"attr2": map[string]any{
+					"attr1": "11111111111111111111111111111111",
+				},
+				"exclude_me": "22222222222222222222222222222222",
+				"ss.ids":     "00000000000000000000000000000000,11111111111111111111111111111111",
+			},
+		},
+	}
+
+	factory := NewFactory()
+	cfg := factory.CreateDefaultConfig()
+	cfg.(*Config).TargetAttribute = "ss.ids"
+	cfg.(*Config).Patterns = []string{
+		"\\b[a-zA-Z0-9]{32}\\b",
+	}
+	cfg.(*Config).ExcludeAttrs = []string{
+		"exclude_me",
 	}
 
 	tp, err := factory.CreateLogs(context.Background(), processortest.NewNopSettings(metadata.Type), cfg, consumertest.NewNop())
