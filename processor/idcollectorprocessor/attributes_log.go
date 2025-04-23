@@ -71,7 +71,7 @@ func (a *logidcollectorprocessor) processLogs(ctx context.Context, ld plog.Logs)
 
 				topAttrs := lr.Attributes()
 
-				var collectedIDs []string
+				collectedIDs := make(map[string]struct{})
 
 				// Recurse through all attributes
 				var processAttributes func(attrs pcommon.Value)
@@ -90,8 +90,8 @@ func (a *logidcollectorprocessor) processLogs(ctx context.Context, ld plog.Logs)
 						strValue := attrs.Str()
 						for _, pattern := range a.compiledPatterns {
 							ids := pattern.FindAllString(strValue, -1)
-							if len(ids) > 0 {
-								collectedIDs = append(collectedIDs, ids...)
+							for i := 0; i < len(ids); i++ {
+								collectedIDs[ids[i]] = struct{}{}
 							}
 						}
 					}
@@ -109,14 +109,19 @@ func (a *logidcollectorprocessor) processLogs(ctx context.Context, ld plog.Logs)
 				if len(collectedIDs) > 0 {
 					// remove any collected IDs that match the negative patterns
 					for _, pattern := range a.compiledNegativePatterns {
-						for i, id := range collectedIDs {
+						for id := range collectedIDs {
 							if pattern.MatchString(id) {
-								collectedIDs = append(collectedIDs[:i], collectedIDs[i+1:]...)
-								break
+								delete(collectedIDs, id)
 							}
 						}
 					}
-					topAttrs.PutStr(a.cfg.TargetAttribute, strings.Join(collectedIDs, ","))
+
+					uniqueIDs := make([]string, 0, len(collectedIDs))
+					for id := range collectedIDs {
+						uniqueIDs = append(uniqueIDs, id)
+					}
+
+					topAttrs.PutStr(a.cfg.TargetAttribute, strings.Join(uniqueIDs, ","))
 				}
 			}
 		}
