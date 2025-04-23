@@ -19,8 +19,9 @@ type PatternsArray []string
 // This determines if a span is to be processed or not.
 // The list of actions is applied in order specified in the configuration.
 type Config struct {
-	Patterns        PatternsArray `mapstructure:"patterns"`
-	TargetAttribute string        `mapstructure:"target_attribute"`
+	Patterns         PatternsArray `mapstructure:"patterns"`
+	NegativePatterns PatternsArray `mapstructure:"negative_patterns"`
+	TargetAttribute  string        `mapstructure:"target_attribute"`
 }
 
 var _ component.Config = (*Config)(nil)

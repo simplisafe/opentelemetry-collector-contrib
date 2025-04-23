@@ -14,9 +14,10 @@ import (
 )
 
 type logidcollectorprocessor struct {
-	logger           *zap.Logger
-	cfg              *Config
-	compiledPatterns []*regexp.Regexp
+	logger                   *zap.Logger
+	cfg                      *Config
+	compiledPatterns         []*regexp.Regexp
+	compiledNegativePatterns []*regexp.Regexp
 }
 
 // newLogidcollectorprocessor returns a processor that modifies attributes of a
@@ -33,10 +34,26 @@ func newLogidcollectorprocessor(logger *zap.Logger, oCfg *Config) *logidcollecto
 		compiledPatterns = append(compiledPatterns, re)
 	}
 
+	var compiledNegativePatterns []*regexp.Regexp
+	if oCfg.NegativePatterns != nil {
+		compiledNegativePatterns = make([]*regexp.Regexp, 0, len(oCfg.NegativePatterns))
+		for _, pattern := range oCfg.NegativePatterns {
+			re, err := regexp.Compile(pattern)
+			if err != nil {
+				logger.Error("failed to compile pattern", zap.String("pattern", pattern), zap.Error(err))
+				continue
+			}
+			compiledNegativePatterns = append(compiledNegativePatterns, re)
+		}
+	} else {
+		compiledNegativePatterns = make([]*regexp.Regexp, 0)
+	}
+
 	return &logidcollectorprocessor{
-		logger:           logger,
-		cfg:              oCfg,
-		compiledPatterns: compiledPatterns,
+		logger:                   logger,
+		cfg:                      oCfg,
+		compiledPatterns:         compiledPatterns,
+		compiledNegativePatterns: compiledNegativePatterns,
 	}
 }
 
@@ -90,6 +107,15 @@ func (a *logidcollectorprocessor) processLogs(ctx context.Context, ld plog.Logs)
 				})
 
 				if len(collectedIDs) > 0 {
+					// remove any collected IDs that match the negative patterns
+					for _, pattern := range a.compiledNegativePatterns {
+						for i, id := range collectedIDs {
+							if pattern.MatchString(id) {
+								collectedIDs = append(collectedIDs[:i], collectedIDs[i+1:]...)
+								break
+							}
+						}
+					}
 					topAttrs.PutStr(a.cfg.TargetAttribute, strings.Join(collectedIDs, ","))
 				}
 			}

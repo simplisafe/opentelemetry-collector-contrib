@@ -19,4 +19,7 @@ processors:
     patterns:
       - \b[a-zA-Z0-9]{32}\b # 32 character alphanumeric IDs
       - \b[a-zA-Z0-9]{7,8}\b # 7 or 8 character alphanumeric IDs
+    negative_patterns:
+      - "notanid"
+      - "alsonotanid"
 ```
