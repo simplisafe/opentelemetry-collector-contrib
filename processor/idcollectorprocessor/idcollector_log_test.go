@@ -41,9 +41,9 @@ func runIndividualLogTestCase(t *testing.T, tt logTestCase, tp processor.Logs) {
 		ld := generateLogData(tt.name, tt.inputBody, tt.inputTraceID, tt.inputSpanID, tt.inputAttributes)
 		assert.NoError(t, tp.ConsumeLogs(context.Background(), ld))
 
-		// if the result log has an attribute "ss.ids", parse it as a csv, sort the strings, rejoin them, and write them back to "ss.ids".
+		// if the result log has an attribute "extracted_ids", parse it as a csv, sort the strings, rejoin them, and write them back to "extracted_ids".
 		// This ensures the order of IDs is consistent across runs.
-		extractedIDsField, found := ld.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0).Attributes().Get("ss.ids")
+		extractedIDsField, found := ld.ResourceLogs().At(0).ScopeLogs().At(0).LogRecords().At(0).Attributes().Get("extracted_ids")
 		if found {
 
 			idList := strings.Split(extractedIDsField.AsString(), ",")
@@ -131,10 +131,10 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 				"attr3": "11111111111111111111111111111111 22222222222222222222222222222222",
 			},
 			expectedAttributes: map[string]any{
-				"attr1":  "00000000000000000000000000000000",
-				"attr2":  "not an ID",
-				"attr3":  "11111111111111111111111111111111 22222222222222222222222222222222",
-				"ss.ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222,33333333333333333333333333333333",
+				"attr1":         "00000000000000000000000000000000",
+				"attr2":         "not an ID",
+				"attr3":         "11111111111111111111111111111111 22222222222222222222222222222222",
+				"extracted_ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222,33333333333333333333333333333333",
 			},
 		},
 		{
@@ -148,10 +148,10 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 				"attr3": "11111111111111111111111111111111 22222222222222222222222222222222 11111111111111111111111111111111",
 			},
 			expectedAttributes: map[string]any{
-				"attr1":  "00000000000000000000000000000000",
-				"attr2":  "not an ID",
-				"attr3":  "11111111111111111111111111111111 22222222222222222222222222222222 11111111111111111111111111111111",
-				"ss.ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222,33333333333333333333333333333333",
+				"attr1":         "00000000000000000000000000000000",
+				"attr2":         "not an ID",
+				"attr3":         "11111111111111111111111111111111 22222222222222222222222222222222 11111111111111111111111111111111",
+				"extracted_ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222,33333333333333333333333333333333",
 			},
 		},
 		{
@@ -170,7 +170,7 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 				"attr2": map[string]any{
 					"attr1": "11111111111111111111111111111111 22222222222222222222222222222222",
 				},
-				"ss.ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222",
+				"extracted_ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222",
 			},
 		},
 		{
@@ -195,7 +195,7 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 						"attr2": "something something 22222222222222222222222222222222 something",
 					},
 				},
-				"ss.ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222",
+				"extracted_ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222",
 			},
 		},
 		{
@@ -220,14 +220,14 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 						"attr1": "11111111111111111111111111111111",
 					},
 				},
-				"ss.ids": "11111111111111111111111111111111",
+				"extracted_ids": "11111111111111111111111111111111",
 			},
 		},
 	}
 
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig()
-	cfg.(*Config).TargetAttribute = "ss.ids"
+	cfg.(*Config).TargetAttribute = "extracted_ids"
 	cfg.(*Config).Patterns = []string{
 		"\\b[a-zA-Z0-9]{32}\\b",
 	}
@@ -259,14 +259,14 @@ func TestIDCollector_FindsMultipleDifferentLengthIDs(t *testing.T) {
 				"attr2": map[string]any{
 					"attr1": "11111111111111111111111111111111 22222222",
 				},
-				"ss.ids": "00000000,11111111111111111111111111111111,22222222",
+				"extracted_ids": "00000000,11111111111111111111111111111111,22222222",
 			},
 		},
 	}
 
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig()
-	cfg.(*Config).TargetAttribute = "ss.ids"
+	cfg.(*Config).TargetAttribute = "extracted_ids"
 	cfg.(*Config).Patterns = []string{
 		"\\b[a-zA-Z0-9]{32}\\b",
 		"\\b[a-zA-Z0-9]{8}\\b",
@@ -299,7 +299,7 @@ func TestIDCollector_DoesntMatchLongerIDs(t *testing.T) {
 
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig()
-	cfg.(*Config).TargetAttribute = "ss.ids"
+	cfg.(*Config).TargetAttribute = "extracted_ids"
 	cfg.(*Config).Patterns = []string{
 		"\\b[a-zA-Z0-9]{32}\\b",
 	}
@@ -331,14 +331,14 @@ func TestIDCollector_ExcludesNegativePatterns(t *testing.T) {
 				"attr2": map[string]any{
 					"attr1": "11111111111111111111111111111111 22222222",
 				},
-				"ss.ids": "00000000,22222222",
+				"extracted_ids": "00000000,22222222",
 			},
 		},
 	}
 
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig()
-	cfg.(*Config).TargetAttribute = "ss.ids"
+	cfg.(*Config).TargetAttribute = "extracted_ids"
 	cfg.(*Config).Patterns = []string{
 		"\\b[a-zA-Z0-9]{32}\\b",
 		"\\b[a-zA-Z0-9]{8}\\b",
@@ -375,15 +375,15 @@ func TestIDCollector_ExcludesAttrs(t *testing.T) {
 				"attr2": map[string]any{
 					"attr1": "11111111111111111111111111111111",
 				},
-				"exclude_me": "22222222222222222222222222222222",
-				"ss.ids":     "00000000000000000000000000000000,11111111111111111111111111111111",
+				"exclude_me":    "22222222222222222222222222222222",
+				"extracted_ids": "00000000000000000000000000000000,11111111111111111111111111111111",
 			},
 		},
 	}
 
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig()
-	cfg.(*Config).TargetAttribute = "ss.ids"
+	cfg.(*Config).TargetAttribute = "extracted_ids"
 	cfg.(*Config).Patterns = []string{
 		"\\b[a-zA-Z0-9]{32}\\b",
 	}
