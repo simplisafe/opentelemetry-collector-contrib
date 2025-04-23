@@ -102,7 +102,7 @@ func TestLogProcessor_NilEmptyData(t *testing.T) {
 	}
 }
 
-func TestAttributes_FindsOneOrMultipleUUID(t *testing.T) {
+func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 	testCases := []logTestCase{
 		{
 			name:      "single and multiple matches",
@@ -177,7 +177,7 @@ func TestAttributes_FindsOneOrMultipleUUID(t *testing.T) {
 	}
 }
 
-func TestAttributes_FindsMultipleDifferentLengthIDs(t *testing.T) {
+func TestIDCollector_FindsMultipleDifferentLengthIDs(t *testing.T) {
 	testCases := []logTestCase{
 		{
 			name:      "finds nested matches",
@@ -215,7 +215,7 @@ func TestAttributes_FindsMultipleDifferentLengthIDs(t *testing.T) {
 	}
 }
 
-func TestAttributes_DoesntMatchLongerIDs(t *testing.T) {
+func TestIDCollector_DoesntMatchLongerIDs(t *testing.T) {
 	testCases := []logTestCase{
 		{
 			name:      "finds nested matches",
@@ -234,6 +234,47 @@ func TestAttributes_DoesntMatchLongerIDs(t *testing.T) {
 	cfg.(*Config).TargetAttribute = "ss.ids"
 	cfg.(*Config).Patterns = PatternsArray{
 		"\\b[a-zA-Z0-9]{32}\\b",
+	}
+
+	tp, err := factory.CreateLogs(context.Background(), processortest.NewNopSettings(metadata.Type), cfg, consumertest.NewNop())
+	require.NoError(t, err)
+	require.NotNil(t, tp)
+
+	for _, tt := range testCases {
+		runIndividualLogTestCase(t, tt, tp)
+	}
+}
+
+func TestIDCollector_ExcludesNegativePatterns(t *testing.T) {
+	testCases := []logTestCase{
+		{
+			name:      "excludes negative pattern matches",
+			inputBody: "some log",
+			inputAttributes: map[string]any{
+				"attr1": "00000000",
+				"attr2": map[string]any{
+					"attr1": "11111111111111111111111111111111 22222222",
+				},
+			},
+			expectedAttributes: map[string]any{
+				"attr1": "00000000",
+				"attr2": map[string]any{
+					"attr1": "11111111111111111111111111111111 22222222",
+				},
+				"ss.ids": "00000000,22222222",
+			},
+		},
+	}
+
+	factory := NewFactory()
+	cfg := factory.CreateDefaultConfig()
+	cfg.(*Config).TargetAttribute = "ss.ids"
+	cfg.(*Config).Patterns = PatternsArray{
+		"\\b[a-zA-Z0-9]{32}\\b",
+		"\\b[a-zA-Z0-9]{8}\\b",
+	}
+	cfg.(*Config).NegativePatterns = PatternsArray{
+		"\\b[1]{32}\\b",
 	}
 
 	tp, err := factory.CreateLogs(context.Background(), processortest.NewNopSettings(metadata.Type), cfg, consumertest.NewNop())
