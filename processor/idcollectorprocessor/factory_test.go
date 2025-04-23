@@ -58,7 +58,7 @@ func TestFactoryCreateLogs(t *testing.T) {
 	factory := NewFactory()
 	cfg := factory.CreateDefaultConfig()
 	oCfg := cfg.(*Config)
-	oCfg.Patterns = PatternsArray{
+	oCfg.Patterns = []string{
 		"pattern1",
 	}
 

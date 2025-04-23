@@ -18,6 +18,7 @@ type logidcollectorprocessor struct {
 	cfg                      *Config
 	compiledPatterns         []*regexp.Regexp
 	compiledNegativePatterns []*regexp.Regexp
+	excludeAttrs             map[string]struct{}
 }
 
 // newLogidcollectorprocessor returns a processor that modifies attributes of a
@@ -49,11 +50,17 @@ func newLogidcollectorprocessor(logger *zap.Logger, oCfg *Config) *logidcollecto
 		compiledNegativePatterns = make([]*regexp.Regexp, 0)
 	}
 
+	excludeAttrs := make(map[string]struct{})
+	for _, attr := range oCfg.ExcludeAttrs {
+		excludeAttrs[attr] = struct{}{}
+	}
+
 	return &logidcollectorprocessor{
 		logger:                   logger,
 		cfg:                      oCfg,
 		compiledPatterns:         compiledPatterns,
 		compiledNegativePatterns: compiledNegativePatterns,
+		excludeAttrs:             excludeAttrs,
 	}
 }
 
@@ -74,17 +81,22 @@ func (a *logidcollectorprocessor) processLogs(ctx context.Context, ld plog.Logs)
 				collectedIDs := make(map[string]struct{})
 
 				// Recurse through all attributes
-				var processAttributes func(attrs pcommon.Value)
-				processAttributes = func(attrs pcommon.Value) {
+				var processAttributes func(attrs pcommon.Value, key string)
+				processAttributes = func(attrs pcommon.Value, key string) {
+					// Skip processing if the key is in the excludeAttrs map
+					if _, excluded := a.excludeAttrs[key]; excluded {
+						return
+					}
+
 					switch attrs.Type() {
 					case pcommon.ValueTypeMap:
 						attrs.Map().Range(func(k string, mv pcommon.Value) bool {
-							processAttributes(mv)
+							processAttributes(mv, k)
 							return true
 						})
 					case pcommon.ValueTypeSlice:
 						for i := 0; i < attrs.Slice().Len(); i++ {
-							processAttributes(attrs.Slice().At(i))
+							processAttributes(attrs.Slice().At(i), "")
 						}
 					case pcommon.ValueTypeStr:
 						strValue := attrs.Str()
@@ -98,11 +110,11 @@ func (a *logidcollectorprocessor) processLogs(ctx context.Context, ld plog.Logs)
 				}
 
 				// Process the raw Body
-				processAttributes(lr.Body())
+				processAttributes(lr.Body(), "")
 
 				// Process all attributes (recursively)
 				topAttrs.Range(func(k string, v pcommon.Value) bool {
-					processAttributes(v)
+					processAttributes(v, k)
 					return true // continue iterating
 				})
 
