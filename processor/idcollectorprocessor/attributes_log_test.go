@@ -5,6 +5,8 @@ package idcollectorprocessor
 
 import (
 	"context"
+	"encoding/hex"
+	"errors"
 	"sort"
 	"strings"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/collector/consumer/consumertest"
+	"go.opentelemetry.io/collector/pdata/pcommon"
 	"go.opentelemetry.io/collector/pdata/plog"
 	"go.opentelemetry.io/collector/processor"
 	"go.opentelemetry.io/collector/processor/processortest"
@@ -25,6 +28,7 @@ import (
 type logTestCase struct {
 	name               string
 	inputBody          string
+	inputTraceID       string
 	inputAttributes    map[string]any
 	expectedAttributes map[string]any
 }
@@ -33,7 +37,7 @@ type logTestCase struct {
 func runIndividualLogTestCase(t *testing.T, tt logTestCase, tp processor.Logs) {
 
 	t.Run(tt.name, func(t *testing.T) {
-		ld := generateLogData(tt.name, tt.inputBody, tt.inputAttributes)
+		ld := generateLogData(tt.name, tt.inputBody, tt.inputTraceID, tt.inputAttributes)
 		assert.NoError(t, tp.ConsumeLogs(context.Background(), ld))
 
 		// if the result log has an attribute "ss.ids", parse it as a csv, sort the strings, rejoin them, and write them back to "ss.ids".
@@ -46,17 +50,23 @@ func runIndividualLogTestCase(t *testing.T, tt logTestCase, tp processor.Logs) {
 			extractedIDsField.SetStr(strings.Join(idList, ","))
 		}
 
-		assert.NoError(t, plogtest.CompareLogs(generateLogData(tt.name, tt.inputBody, tt.expectedAttributes), ld))
+		assert.NoError(t, plogtest.CompareLogs(generateLogData(tt.name, tt.inputBody, tt.inputTraceID, tt.expectedAttributes), ld))
 	})
 }
 
-func generateLogData(resourceName string, body string, attrs map[string]any) plog.Logs {
+func generateLogData(resourceName string, body string, traceID string, attrs map[string]any) plog.Logs {
 	td := plog.NewLogs()
 	res := td.ResourceLogs().AppendEmpty()
 	res.Resource().Attributes().PutStr("name", resourceName)
 	sl := res.ScopeLogs().AppendEmpty()
 	lr := sl.LogRecords().AppendEmpty()
 	lr.Body().SetStr(body)
+	traceIDParsed, err := ParseTraceID(traceID)
+	if err == nil {
+		lr.SetTraceID(pcommon.TraceID{})
+	}
+	lr.SetTraceID(traceIDParsed)
+	lr.SetTimestamp(0)
 	//nolint:errcheck
 	lr.Attributes().FromRaw(attrs)
 	return td
@@ -105,8 +115,9 @@ func TestLogProcessor_NilEmptyData(t *testing.T) {
 func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 	testCases := []logTestCase{
 		{
-			name:      "single and multiple matches",
-			inputBody: "some log 33333333333333333333333333333333 here",
+			name:         "single and multiple matches",
+			inputBody:    "some log 33333333333333333333333333333333 here",
+			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
 			inputAttributes: map[string]any{
 				"attr1": "00000000000000000000000000000000",
 				"attr2": "not an ID",
@@ -120,8 +131,9 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 			},
 		},
 		{
-			name:      "single and multiple matches with dupes",
-			inputBody: "some log 33333333333333333333333333333333 here",
+			name:         "single and multiple matches with dupes",
+			inputBody:    "some log 33333333333333333333333333333333 here",
+			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
 			inputAttributes: map[string]any{
 				"attr1": "00000000000000000000000000000000",
 				"attr2": "not an ID",
@@ -135,8 +147,9 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 			},
 		},
 		{
-			name:      "finds nested matches",
-			inputBody: "some log",
+			name:         "finds nested matches",
+			inputBody:    "some log",
+			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
 			inputAttributes: map[string]any{
 				"attr1": "00000000000000000000000000000000",
 				"attr2": map[string]any{
@@ -152,8 +165,9 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 			},
 		},
 		{
-			name:      "finds array matches",
-			inputBody: "some log",
+			name:         "finds array matches",
+			inputBody:    "some log",
+			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
 			inputAttributes: map[string]any{
 				"attr1": "00000000000000000000000000000000",
 				"attr2": []any{
@@ -172,6 +186,28 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 					},
 				},
 				"ss.ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222",
+			},
+		},
+		{
+			name:         "excludes traceID",
+			inputBody:    "some log",
+			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
+			inputAttributes: map[string]any{
+				"attr1": "07aa8ca1835d3fd6b0c9e26828d50236",
+				"attr2": []any{
+					map[string]any{
+						"attr1": "11111111111111111111111111111111",
+					},
+				},
+			},
+			expectedAttributes: map[string]any{
+				"attr1": "07aa8ca1835d3fd6b0c9e26828d50236",
+				"attr2": []any{
+					map[string]any{
+						"attr1": "11111111111111111111111111111111",
+					},
+				},
+				"ss.ids": "11111111111111111111111111111111",
 			},
 		},
 	}
@@ -195,8 +231,9 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 func TestIDCollector_FindsMultipleDifferentLengthIDs(t *testing.T) {
 	testCases := []logTestCase{
 		{
-			name:      "finds nested matches",
-			inputBody: "some log",
+			name:         "finds nested matches",
+			inputBody:    "some log",
+			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
 			inputAttributes: map[string]any{
 				"attr1": "00000000",
 				"attr2": map[string]any{
@@ -233,8 +270,9 @@ func TestIDCollector_FindsMultipleDifferentLengthIDs(t *testing.T) {
 func TestIDCollector_DoesntMatchLongerIDs(t *testing.T) {
 	testCases := []logTestCase{
 		{
-			name:      "finds nested matches",
-			inputBody: "some log",
+			name:         "finds nested matches",
+			inputBody:    "some log",
+			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
 			inputAttributes: map[string]any{
 				"attr1": "000000000000000000000000000000000", // 33 characters
 			},
@@ -263,8 +301,9 @@ func TestIDCollector_DoesntMatchLongerIDs(t *testing.T) {
 func TestIDCollector_ExcludesNegativePatterns(t *testing.T) {
 	testCases := []logTestCase{
 		{
-			name:      "excludes negative pattern matches",
-			inputBody: "some log",
+			name:         "excludes negative pattern matches",
+			inputBody:    "some log",
+			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
 			inputAttributes: map[string]any{
 				"attr1": "00000000",
 				"attr2": map[string]any{
@@ -299,4 +338,16 @@ func TestIDCollector_ExcludesNegativePatterns(t *testing.T) {
 	for _, tt := range testCases {
 		runIndividualLogTestCase(t, tt, tp)
 	}
+}
+
+func ParseTraceID(traceIDStr string) (pcommon.TraceID, error) {
+	var id pcommon.TraceID
+	if hex.DecodedLen(len(traceIDStr)) != len(id) {
+		return pcommon.TraceID{}, errors.New("trace ids must be 32 hex characters")
+	}
+	_, err := hex.Decode(id[:], []byte(traceIDStr))
+	if err != nil {
+		return pcommon.TraceID{}, err
+	}
+	return id, nil
 }
