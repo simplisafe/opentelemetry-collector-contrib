@@ -29,6 +29,7 @@ type logTestCase struct {
 	name               string
 	inputBody          string
 	inputTraceID       string
+	inputSpanID        string
 	inputAttributes    map[string]any
 	expectedAttributes map[string]any
 }
@@ -37,7 +38,7 @@ type logTestCase struct {
 func runIndividualLogTestCase(t *testing.T, tt logTestCase, tp processor.Logs) {
 
 	t.Run(tt.name, func(t *testing.T) {
-		ld := generateLogData(tt.name, tt.inputBody, tt.inputTraceID, tt.inputAttributes)
+		ld := generateLogData(tt.name, tt.inputBody, tt.inputTraceID, tt.inputSpanID, tt.inputAttributes)
 		assert.NoError(t, tp.ConsumeLogs(context.Background(), ld))
 
 		// if the result log has an attribute "ss.ids", parse it as a csv, sort the strings, rejoin them, and write them back to "ss.ids".
@@ -50,11 +51,11 @@ func runIndividualLogTestCase(t *testing.T, tt logTestCase, tp processor.Logs) {
 			extractedIDsField.SetStr(strings.Join(idList, ","))
 		}
 
-		assert.NoError(t, plogtest.CompareLogs(generateLogData(tt.name, tt.inputBody, tt.inputTraceID, tt.expectedAttributes), ld))
+		assert.NoError(t, plogtest.CompareLogs(generateLogData(tt.name, tt.inputBody, tt.inputTraceID, tt.inputSpanID, tt.expectedAttributes), ld))
 	})
 }
 
-func generateLogData(resourceName string, body string, traceID string, attrs map[string]any) plog.Logs {
+func generateLogData(resourceName string, body string, traceID string, spanID string, attrs map[string]any) plog.Logs {
 	td := plog.NewLogs()
 	res := td.ResourceLogs().AppendEmpty()
 	res.Resource().Attributes().PutStr("name", resourceName)
@@ -65,7 +66,12 @@ func generateLogData(resourceName string, body string, traceID string, attrs map
 	if err == nil {
 		lr.SetTraceID(pcommon.TraceID{})
 	}
+	spanIDParsed, err := ParseSpanID(spanID)
+	if err == nil {
+		lr.SetSpanID(pcommon.SpanID{})
+	}
 	lr.SetTraceID(traceIDParsed)
+	lr.SetSpanID(spanIDParsed)
 	lr.SetTimestamp(0)
 	//nolint:errcheck
 	lr.Attributes().FromRaw(attrs)
@@ -118,6 +124,7 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 			name:         "single and multiple matches",
 			inputBody:    "some log 33333333333333333333333333333333 here",
 			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
+			inputSpanID:  "682bb4b582fcbb58",
 			inputAttributes: map[string]any{
 				"attr1": "00000000000000000000000000000000",
 				"attr2": "not an ID",
@@ -134,6 +141,7 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 			name:         "single and multiple matches with dupes",
 			inputBody:    "some log 33333333333333333333333333333333 here",
 			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
+			inputSpanID:  "682bb4b582fcbb58",
 			inputAttributes: map[string]any{
 				"attr1": "00000000000000000000000000000000",
 				"attr2": "not an ID",
@@ -150,6 +158,7 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 			name:         "finds nested matches",
 			inputBody:    "some log",
 			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
+			inputSpanID:  "682bb4b582fcbb58",
 			inputAttributes: map[string]any{
 				"attr1": "00000000000000000000000000000000",
 				"attr2": map[string]any{
@@ -168,6 +177,7 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 			name:         "finds array matches",
 			inputBody:    "some log",
 			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
+			inputSpanID:  "682bb4b582fcbb58",
 			inputAttributes: map[string]any{
 				"attr1": "00000000000000000000000000000000",
 				"attr2": []any{
@@ -192,8 +202,10 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 			name:         "excludes traceID",
 			inputBody:    "some log",
 			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
+			inputSpanID:  "682bb4b582fcbb58",
 			inputAttributes: map[string]any{
-				"attr1": "07aa8ca1835d3fd6b0c9e26828d50236",
+				"actual_trace_id": "07aa8ca1835d3fd6b0c9e26828d50236",
+				"actual_span_id":  "682bb4b582fcbb58",
 				"attr2": []any{
 					map[string]any{
 						"attr1": "11111111111111111111111111111111",
@@ -201,7 +213,8 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 				},
 			},
 			expectedAttributes: map[string]any{
-				"attr1": "07aa8ca1835d3fd6b0c9e26828d50236",
+				"actual_trace_id": "07aa8ca1835d3fd6b0c9e26828d50236",
+				"actual_span_id":  "682bb4b582fcbb58",
 				"attr2": []any{
 					map[string]any{
 						"attr1": "11111111111111111111111111111111",
@@ -234,6 +247,7 @@ func TestIDCollector_FindsMultipleDifferentLengthIDs(t *testing.T) {
 			name:         "finds nested matches",
 			inputBody:    "some log",
 			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
+			inputSpanID:  "682bb4b582fcbb58",
 			inputAttributes: map[string]any{
 				"attr1": "00000000",
 				"attr2": map[string]any{
@@ -273,6 +287,7 @@ func TestIDCollector_DoesntMatchLongerIDs(t *testing.T) {
 			name:         "finds nested matches",
 			inputBody:    "some log",
 			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
+			inputSpanID:  "682bb4b582fcbb58",
 			inputAttributes: map[string]any{
 				"attr1": "000000000000000000000000000000000", // 33 characters
 			},
@@ -304,6 +319,7 @@ func TestIDCollector_ExcludesNegativePatterns(t *testing.T) {
 			name:         "excludes negative pattern matches",
 			inputBody:    "some log",
 			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
+			inputSpanID:  "682bb4b582fcbb58",
 			inputAttributes: map[string]any{
 				"attr1": "00000000",
 				"attr2": map[string]any{
@@ -346,6 +362,7 @@ func TestIDCollector_ExcludesAttrs(t *testing.T) {
 			name:         "excludes excluded attributes",
 			inputBody:    "some log",
 			inputTraceID: "07aa8ca1835d3fd6b0c9e26828d50236",
+			inputSpanID:  "682bb4b582fcbb58",
 			inputAttributes: map[string]any{
 				"attr1": "00000000000000000000000000000000",
 				"attr2": map[string]any{
@@ -391,6 +408,18 @@ func ParseTraceID(traceIDStr string) (pcommon.TraceID, error) {
 	_, err := hex.Decode(id[:], []byte(traceIDStr))
 	if err != nil {
 		return pcommon.TraceID{}, err
+	}
+	return id, nil
+}
+
+func ParseSpanID(spanIDStr string) (pcommon.SpanID, error) {
+	var id pcommon.SpanID
+	if hex.DecodedLen(len(spanIDStr)) != len(id) {
+		return pcommon.SpanID{}, errors.New("span ids must be 16 hex characters")
+	}
+	_, err := hex.Decode(id[:], []byte(spanIDStr))
+	if err != nil {
+		return pcommon.SpanID{}, err
 	}
 	return id, nil
 }
