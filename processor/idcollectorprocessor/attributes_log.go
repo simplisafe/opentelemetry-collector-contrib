@@ -116,6 +116,12 @@ func (a *logidcollectorprocessor) processLogs(ctx context.Context, ld plog.Logs)
 						}
 					}
 
+					// if collectedIDs contains the traceID, remove it
+					traceID := lr.TraceID()
+					if !traceID.IsEmpty() {
+						delete(collectedIDs, traceID.String())
+					}
+
 					uniqueIDs := make([]string, 0, len(collectedIDs))
 					for id := range collectedIDs {
 						uniqueIDs = append(uniqueIDs, id)
