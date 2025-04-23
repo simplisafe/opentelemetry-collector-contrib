@@ -134,6 +134,11 @@ func (a *logidcollectorprocessor) processLogs(ctx context.Context, ld plog.Logs)
 						delete(collectedIDs, traceID.String())
 					}
 
+					spanID := lr.SpanID()
+					if !spanID.IsEmpty() {
+						delete(collectedIDs, spanID.String())
+					}
+
 					uniqueIDs := make([]string, 0, len(collectedIDs))
 					for id := range collectedIDs {
 						uniqueIDs = append(uniqueIDs, id)
