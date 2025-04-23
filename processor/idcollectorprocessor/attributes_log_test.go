@@ -120,6 +120,21 @@ func TestIDCollector_FindsOneOrMultipleUUID(t *testing.T) {
 			},
 		},
 		{
+			name:      "single and multiple matches with dupes",
+			inputBody: "some log 33333333333333333333333333333333 here",
+			inputAttributes: map[string]any{
+				"attr1": "00000000000000000000000000000000",
+				"attr2": "not an ID",
+				"attr3": "11111111111111111111111111111111 22222222222222222222222222222222 11111111111111111111111111111111",
+			},
+			expectedAttributes: map[string]any{
+				"attr1":  "00000000000000000000000000000000",
+				"attr2":  "not an ID",
+				"attr3":  "11111111111111111111111111111111 22222222222222222222222222222222 11111111111111111111111111111111",
+				"ss.ids": "00000000000000000000000000000000,11111111111111111111111111111111,22222222222222222222222222222222,33333333333333333333333333333333",
+			},
+		},
+		{
 			name:      "finds nested matches",
 			inputBody: "some log",
 			inputAttributes: map[string]any{
