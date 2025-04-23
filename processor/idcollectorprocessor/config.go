@@ -9,8 +9,6 @@ import (
 	"go.opentelemetry.io/collector/component"
 )
 
-type PatternsArray []string
-
 // Config specifies the set of attributes to be inserted, updated, upserted and
 // deleted and the properties to include/exclude a span from being processed.
 // This processor handles all forms of modifications to attributes within a span, log, or metric.
@@ -19,9 +17,10 @@ type PatternsArray []string
 // This determines if a span is to be processed or not.
 // The list of actions is applied in order specified in the configuration.
 type Config struct {
-	Patterns         PatternsArray `mapstructure:"patterns"`
-	NegativePatterns PatternsArray `mapstructure:"negative_patterns"`
-	TargetAttribute  string        `mapstructure:"target_attribute"`
+	Patterns         []string `mapstructure:"patterns"`
+	NegativePatterns []string `mapstructure:"negative_patterns"`
+	TargetAttribute  string   `mapstructure:"target_attribute"`
+	ExcludeAttrs     []string `mapstructure:"exclude_attributes"`
 }
 
 var _ component.Config = (*Config)(nil)

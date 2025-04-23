@@ -24,7 +24,7 @@ func TestLoadConfig(t *testing.T) {
 		{
 			id: component.NewIDWithName(metadata.Type, "insert"),
 			expected: &Config{
-				Patterns: PatternsArray{
+				Patterns: []string{
 					"\\b[a-zA-Z0-9]{32}\\b",
 					"\\b[a-zA-Z0-9]{32}\\b",
 				},
